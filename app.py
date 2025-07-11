@@ -358,9 +358,24 @@ def trigger_reminders_route():
         # Qui potresti aggiungere un controllo ulteriore, es. un token specifico se non vuoi solo @login_required
         # Oppure verificare se l'utente è un admin
         print(f"Richiesta di trigger promemoria da utente: {current_user.username} (ID: {current_user.id})")
-        result = orchestrator_agent.process_reminders()
 
-        flash(f"Processo promemoria eseguito: {result.get('message', 'Nessun dettaglio fornito dall orchestrator.')}", "info")
+        # Messaggio immediato (anche se non strettamente "prima" dell'esecuzione completa,
+        # ma prima del redirect, l'utente lo vedrà al caricamento della pagina successiva)
+        # Considera che il processo di reminder è sincrono qui.
+        # Per un vero messaggio "avviato", servirebbe JS/AJAX.
+        # Questo è un compromesso per ora.
+        flash("Richiesta di controllo scadenze ricevuta. Il processo è in corso...", "info")
+
+        result = orchestrator_agent.process_reminders() # Esecuzione effettiva
+
+        # Sovrascrive o aggiunge un nuovo messaggio flash con il risultato effettivo.
+        # Flask gestisce più messaggi flash mostrandoli in sequenza.
+        # Per evitare confusione, potremmo voler solo un messaggio finale.
+        # Decido di mantenere solo il messaggio finale più dettagliato.
+        # Rimuovo il flash precedente e ne creo uno più completo.
+
+        flash(f"Controllo scadenze completato. {result.get('message', 'Elaborazione terminata.')}", "success" if not result.get('error') else "warning")
+
         # Per debug, potresti voler loggare 'result' completamente o ritornarlo come JSON se fosse una chiamata API
         print(f"Risultato da orchestrator_agent.process_reminders(): {result}")
 
