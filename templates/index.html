@@ -30,6 +30,22 @@
             </div>
         </div>
 
+        <div class="row mt-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">Azioni Promemoria</h5>
+                        <p class="card-text">Premi il pulsante qui sotto per avviare il controllo e l'invio dei promemoria programmati (es. una volta al giorno).</p>
+                        <form method="POST" action="{{ url_for('trigger_reminders_route') }}">
+                            <button type="submit" class="btn btn-primary">
+                                Avvia Controllo Promemoria
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 <div class="mt-4">
