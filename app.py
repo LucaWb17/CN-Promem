@@ -1,5 +1,9 @@
-from flask import Flask, request, render_template, redirect, flash, session, url_for, send_file
+from flask import Flask, request, render_template, redirect, flash, session, url_for, send_file, jsonify # Aggiunto jsonify
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+import psycopg2.extras # Aggiunto per DictCursor in app.py se necessario
+
+# Importa i nuovi agenti
+from agents import DatabaseAgent, ReminderLogicAgent, NotificationAgent, OrchestratorAgent
 from werkzeug.security import generate_password_hash, check_password_hash
 import psycopg2
 import csv
@@ -28,20 +32,54 @@ db_config = {
     "database": os.getenv('DB_NAME'),
     "port": os.getenv('DB_PORT', 5432)  # Porta di default per PostgreSQL
 }
-print(f"Connessione al database: {os.getenv('DB_NAME')}")
+print(f"Configurazione DB caricata per: {os.getenv('DB_NAME')}")
 
-# Funzione per connettersi a PostgreSQL
-# Funzione per connettersi a PostgreSQL
+
+# Inizializzazione degli Agenti
+# Le configurazioni sono caricate da .env all'inizio di app.py
+
+# Twilio config (già caricate da .env grazie a load_dotenv())
+twilio_account_sid = os.getenv('TWILIO_ACCOUNT_SID')
+twilio_auth_token = os.getenv('TWILIO_AUTH_TOKEN')
+twilio_phone_number = os.getenv('TWILIO_PHONE_NUMBER')
+
+# Istanzia gli agenti una volta, così possono essere usati dall'app
+db_agent = DatabaseAgent(db_config)
+reminder_logic_agent = ReminderLogicAgent()
+
+notification_agent = None
+orchestrator_agent = None
+
+try:
+    if not all([twilio_account_sid, twilio_auth_token, twilio_phone_number]):
+        print("ATTENZIONE: Una o più variabili d'ambiente TWILIO non sono impostate (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER). L'invio SMS sarà disabilitato.")
+    else:
+        notification_agent = NotificationAgent(
+            account_sid=twilio_account_sid,
+            auth_token=twilio_auth_token,
+            phone_number=twilio_phone_number
+        )
+except ValueError as e: # Cattura il ValueError da NotificationAgent se le credenziali sono vuote dopo il check
+    print(f"ERRORE: Impossibile inizializzare NotificationAgent: {e}")
+    # notification_agent rimane None
+
+if notification_agent:
+    orchestrator_agent = OrchestratorAgent(db_agent, reminder_logic_agent, notification_agent)
+else:
+    print("ERRORE CRITICO: OrchestratorAgent non può essere inizializzato perché NotificationAgent non è disponibile.")
+    # L'app funzionerà ma /trigger_reminders darà errore o sarà disabilitato.
+
+# Funzione per connettersi a PostgreSQL (usata da parti di app.py, DatabaseAgent ha la sua)
 def get_db_connection():
     return psycopg2.connect(**db_config)
 
-# Test della connessione al database
+# Test della connessione al database all'avvio
 try:
-    db = get_db_connection()
-    print("✅ Connessione al database riuscita!")
-    db.close()
+    conn_test = get_db_connection()
+    print("✅ Connessione al database PostgreSQL riuscita!")
+    conn_test.close()
 except Exception as e:
-    print(f"❌ Errore durante la connessione al database: {e}")
+    print(f"❌ Errore durante la connessione al database PostgreSQL: {e}")
 
 
 # Funzione per creare le tabelle se non esistono
@@ -307,6 +345,34 @@ def create_default_user_route():
     finally:
         cursor.close()
         db.close()
+
+# Nuova rotta per attivare il processo dei promemoria
+@app.route('/trigger_reminders', methods=['POST']) # Usare POST per azioni che modificano stato o eseguono task
+@login_required # Proteggere l'endpoint
+def trigger_reminders_route():
+    if not orchestrator_agent:
+        flash("Il sistema di promemoria non è correttamente configurato (NotificationAgent o OrchestratorAgent mancante). Controllare i log del server.", "danger")
+        return redirect(url_for('index'))
+
+    try:
+        # Qui potresti aggiungere un controllo ulteriore, es. un token specifico se non vuoi solo @login_required
+        # Oppure verificare se l'utente è un admin
+        print(f"Richiesta di trigger promemoria da utente: {current_user.username} (ID: {current_user.id})")
+        result = orchestrator_agent.process_reminders()
+
+        flash(f"Processo promemoria eseguito: {result.get('message', 'Nessun dettaglio fornito dall orchestrator.')}", "info")
+        # Per debug, potresti voler loggare 'result' completamente o ritornarlo come JSON se fosse una chiamata API
+        print(f"Risultato da orchestrator_agent.process_reminders(): {result}")
+
+    except Exception as e:
+        print(f"Errore critico durante l'esecuzione di orchestrator_agent.process_reminders(): {e}")
+        flash(f"Errore grave durante l'attivazione dei promemoria: {str(e)}", "danger")
+        # Potresti voler loggare l'eccezione completa qui
+        import traceback
+        traceback.print_exc()
+
+    return redirect(url_for('index')) # O a una pagina di admin/status dedicata
+
 
 if __name__ == '__main__':
     create_tables()
